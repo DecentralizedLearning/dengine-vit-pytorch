@@ -1,0 +1,3 @@
+patterns:
+  ".*Centralized.*": "#000000"
+  ".*ViT.*": "#324376"
