@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple
 from pathlib import Path
 import re
 from argparse import ArgumentParser
@@ -9,8 +9,6 @@ from typing import List, Dict, Any
 import os
 
 import torch
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 from pydantic import ValidationError
 
@@ -21,14 +19,12 @@ from dengine.config import ExperimentConfiguration
 from dengine.config.utils import convert_to_nested_dict
 from dengine import load_experiment_from_yamls
 from dengine.bin.simulation import load_engine
-from dengine.training_strategies.decorators import register_local_training
-from dengine.scenarios.decentralized import DecAvgClient, VanillaDecentralizedSynch
-from dengine.training_strategies.local_update_strategy import TrainingEngine
+from dengine.scenarios.decentralized import DecAvgClient
 from dengine.scenarios.federated import FederatedClient
 from dengine.callbacks.local import LossDumpCallback, ConfusionMatrixDumpOnCommRoundEndCallback, ConfusionMatrixDumpOnEpochEndCallback
 
 from vit_pytorch.cct import CCT
-from dengine_vit_pytorch import create_model
+from dengine_vit_pytorch import create_model, StatefulLRScheduler
 
 
 torch.set_float32_matmul_precision("high")
@@ -36,24 +32,6 @@ torch.set_float32_matmul_precision("high")
 
 os.environ["TORCH_CUDNN_BENCHMARK"] = "True"
 os.environ["TORCH_CUDNN_DETERMINISTIC"] = "False"
-
-
-@register_local_training()
-class StatefulLRScheduler(TrainingEngine):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._scheduler = None
-
-    def _load_scheduler(self, optimizer: Optimizer) -> Optional[LRScheduler]:
-        if not self._scheduler_type:
-            return
-        if self._scheduler is None:
-            assert isinstance(self._scenario, VanillaDecentralizedSynch)
-            epochs = self._local_epochs
-            self._local_epochs = self._scenario._max_communication_rounds * epochs
-            self._scheduler = super()._load_scheduler(optimizer)
-            self._local_epochs = epochs
-        return self._scheduler
 
 
 # ..... ..... ..... ..... ..... ..... ..... ..... #
@@ -220,7 +198,7 @@ def load_decentralized(
     )
     er_config.name = (
         f"{er_config.dataset.train.target},"
-        "ER,DecAvg,new,"
+        "ER,DecAvg,"
         f"{er_config.client.local_model.target}"
     )
     configs.append(er_config)
