@@ -14,3 +14,17 @@ PYTHON_GIL=0 python main.py \
 ```
 
 To plot the results, use the *Comparison plot* in the [notebooks repository](https://github.com/DecentralizedLearning/notebooks).
+
+## Good to know
+```
+TORCH_CUDNN_BENCHMARK=True TORCH_CUDNN_DETERMINISTIC=False
+
+            "dataset.train.arguments.use_cache": False,
+
+    "dataset.train.arguments.augmentations": True,
+    "client.training_engine.arguments.training_DataLoader_kwargs": {
+        "persistent_workers": True,
+        "num_workers": 2,
+        "prefetch_factor": 3,
+    },
+```

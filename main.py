@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 from pathlib import Path
 import re
 from argparse import ArgumentParser
@@ -6,7 +6,11 @@ import signal
 import torch.multiprocessing as mp
 import json
 from typing import List, Dict, Any
+import os
 
+import torch
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 from pydantic import ValidationError
 
@@ -17,12 +21,39 @@ from dengine.config import ExperimentConfiguration
 from dengine.config.utils import convert_to_nested_dict
 from dengine import load_experiment_from_yamls
 from dengine.bin.simulation import load_engine
-from dengine.scenarios.decentralized import DecAvgClient
+from dengine.training_strategies.decorators import register_local_training
+from dengine.scenarios.decentralized import DecAvgClient, VanillaDecentralizedSynch
+from dengine.training_strategies.local_update_strategy import TrainingEngine
 from dengine.scenarios.federated import FederatedClient
 from dengine.callbacks.local import LossDumpCallback, ConfusionMatrixDumpOnCommRoundEndCallback, ConfusionMatrixDumpOnEpochEndCallback
 
 from vit_pytorch.cct import CCT
 from dengine_vit_pytorch import create_model
+
+
+torch.set_float32_matmul_precision("high")
+
+
+os.environ["TORCH_CUDNN_BENCHMARK"] = "True"
+os.environ["TORCH_CUDNN_DETERMINISTIC"] = "False"
+
+
+@register_local_training()
+class StatefulLRScheduler(TrainingEngine):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._scheduler = None
+
+    def _load_scheduler(self, optimizer: Optimizer) -> Optional[LRScheduler]:
+        if not self._scheduler_type:
+            return
+        if self._scheduler is None:
+            assert isinstance(self._scenario, VanillaDecentralizedSynch)
+            epochs = self._local_epochs
+            self._local_epochs = self._scenario._max_communication_rounds * epochs
+            self._scheduler = super()._load_scheduler(optimizer)
+            self._local_epochs = epochs
+        return self._scheduler
 
 
 # ..... ..... ..... ..... ..... ..... ..... ..... #
@@ -66,21 +97,26 @@ CORE_OVERRIDES = {
         num_layers=2,           # was 4: CCT-2/3x2
         num_heads=2,
         mlp_ratio=1.,
-        positional_embedding='learnable',
+        positional_embedding='sine',
     ),
+    "client.training_engine.target": StatefulLRScheduler,
     # Training Engine
-    "client.training_engine.arguments.optimizer": "Adam",
+    "client.training_engine.arguments.optimizer": "AdamW",
     "client.training_engine.arguments.lr": 0.001,
-    "client.training_engine.arguments.adam_weight_decay": 0.0005,
     "client.training_engine.arguments.scheduler": "cosine",
-    "client.training_engine.arguments.patience": 3,
-    "client.training_engine.arguments.epochs": 200,
+    "client.training_engine.arguments.patience": 15,
+    "client.training_engine.arguments.epochs": 100,
     "client.training_engine.arguments.validation_batch_size": 1024,
     "client.training_engine.arguments.training_batch_size": 256,
     # Dataset
-    "dataset.train.arguments.augmentations": False,
+    "dataset.train.arguments.augmentations": True,
+    "client.training_engine.arguments.training_DataLoader_kwargs": {
+        "persistent_workers": True,
+        "num_workers": 2,
+        "prefetch_factor": 3,
+    },
     # Partitioning
-    "partitioning.arguments.validation_percentage": 0.2,
+    "partitioning.arguments.validation_percentage": 0.01,
     # Callbacks
     "callbacks": [
         {"target": ConfusionMatrixDumpOnCommRoundEndCallback},
@@ -90,7 +126,6 @@ CORE_OVERRIDES = {
 
 CENTRALIZED_CONFIG_OVERRIDES = {
     **CORE_OVERRIDES,
-    "client.training_engine.arguments.epochs": 100,
     "callbacks": [
         {"target": ConfusionMatrixDumpOnEpochEndCallback},
         {"target": LossDumpCallback}
@@ -185,7 +220,7 @@ def load_decentralized(
     )
     er_config.name = (
         f"{er_config.dataset.train.target},"
-        "ER,DecAvg,"
+        "ER,DecAvg,new,"
         f"{er_config.client.local_model.target}"
     )
     configs.append(er_config)
@@ -262,7 +297,7 @@ def main():
     if extra_arguments.num_parallel_clients > 1:
         client_parallelism_overrides = {
             "scenario.arguments.num_parallel_clients": extra_arguments.num_parallel_clients,
-            "dataset.train.arguments.use_cache": True,
+            "dataset.train.arguments.use_cache": False,
             "dataset.test.arguments.use_cache": True,
         }
 
