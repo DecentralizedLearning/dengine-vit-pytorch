@@ -77,7 +77,6 @@ CORE_OVERRIDES = {
         mlp_ratio=1.,
         positional_embedding='sine',
     ),
-    "client.training_engine.target": StatefulLRScheduler,
     # Training Engine
     "client.training_engine.arguments.optimizer": "AdamW",
     "client.training_engine.arguments.lr": 0.001,
@@ -115,6 +114,7 @@ FEDERATED_CONFIGS_OVERRIDES = {
     "client.target": FederatedClient,
     "scenario.arguments.common_init": True,
     "scenario.arguments.use_weighted_avg": True,
+    "client.training_engine.target": StatefulLRScheduler,
 }
 DECENTRALIZED_CONFIG_OVERRIDES = {
     **CORE_OVERRIDES,
@@ -123,6 +123,7 @@ DECENTRALIZED_CONFIG_OVERRIDES = {
     "scenario.arguments.common_init": True,
     "client.arguments.use_weighted_avg": True,
     "client.arguments.include_myself": True,
+    "client.training_engine.target": StatefulLRScheduler,
 }
 
 
