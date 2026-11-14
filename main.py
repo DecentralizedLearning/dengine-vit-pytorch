@@ -6,7 +6,9 @@ import signal
 import torch.multiprocessing as mp
 import json
 from typing import List, Dict, Any
+import os
 
+import torch
 from tqdm import tqdm
 from pydantic import ValidationError
 
@@ -22,7 +24,14 @@ from dengine.scenarios.federated import FederatedClient
 from dengine.callbacks.local import LossDumpCallback, ConfusionMatrixDumpOnCommRoundEndCallback, ConfusionMatrixDumpOnEpochEndCallback
 
 from vit_pytorch.cct import CCT
-from dengine_vit_pytorch import create_model
+from dengine_vit_pytorch import create_model, StatefulLRScheduler
+
+
+torch.set_float32_matmul_precision("high")
+
+
+os.environ["TORCH_CUDNN_BENCHMARK"] = "True"
+os.environ["TORCH_CUDNN_DETERMINISTIC"] = "False"
 
 
 # ..... ..... ..... ..... ..... ..... ..... ..... #
@@ -66,21 +75,25 @@ CORE_OVERRIDES = {
         num_layers=2,           # was 4: CCT-2/3x2
         num_heads=2,
         mlp_ratio=1.,
-        positional_embedding='learnable',
+        positional_embedding='sine',
     ),
     # Training Engine
-    "client.training_engine.arguments.optimizer": "Adam",
+    "client.training_engine.arguments.optimizer": "AdamW",
     "client.training_engine.arguments.lr": 0.001,
-    "client.training_engine.arguments.adam_weight_decay": 0.0005,
     "client.training_engine.arguments.scheduler": "cosine",
-    "client.training_engine.arguments.patience": 3,
-    "client.training_engine.arguments.epochs": 200,
+    "client.training_engine.arguments.patience": 15,
+    "client.training_engine.arguments.epochs": 100,
     "client.training_engine.arguments.validation_batch_size": 1024,
     "client.training_engine.arguments.training_batch_size": 256,
     # Dataset
-    "dataset.train.arguments.augmentations": False,
+    "dataset.train.arguments.augmentations": True,
+    "client.training_engine.arguments.training_DataLoader_kwargs": {
+        "persistent_workers": True,
+        "num_workers": 2,
+        "prefetch_factor": 3,
+    },
     # Partitioning
-    "partitioning.arguments.validation_percentage": 0.2,
+    "partitioning.arguments.validation_percentage": 0.01,
     # Callbacks
     "callbacks": [
         {"target": ConfusionMatrixDumpOnCommRoundEndCallback},
@@ -90,7 +103,6 @@ CORE_OVERRIDES = {
 
 CENTRALIZED_CONFIG_OVERRIDES = {
     **CORE_OVERRIDES,
-    "client.training_engine.arguments.epochs": 100,
     "callbacks": [
         {"target": ConfusionMatrixDumpOnEpochEndCallback},
         {"target": LossDumpCallback}
@@ -102,6 +114,7 @@ FEDERATED_CONFIGS_OVERRIDES = {
     "client.target": FederatedClient,
     "scenario.arguments.common_init": True,
     "scenario.arguments.use_weighted_avg": True,
+    "client.training_engine.target": StatefulLRScheduler,
 }
 DECENTRALIZED_CONFIG_OVERRIDES = {
     **CORE_OVERRIDES,
@@ -110,6 +123,7 @@ DECENTRALIZED_CONFIG_OVERRIDES = {
     "scenario.arguments.common_init": True,
     "client.arguments.use_weighted_avg": True,
     "client.arguments.include_myself": True,
+    "client.training_engine.target": StatefulLRScheduler,
 }
 
 
@@ -262,7 +276,7 @@ def main():
     if extra_arguments.num_parallel_clients > 1:
         client_parallelism_overrides = {
             "scenario.arguments.num_parallel_clients": extra_arguments.num_parallel_clients,
-            "dataset.train.arguments.use_cache": True,
+            "dataset.train.arguments.use_cache": False,
             "dataset.test.arguments.use_cache": True,
         }
 
